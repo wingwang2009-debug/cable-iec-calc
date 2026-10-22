@@ -3,34 +3,42 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 
-st.set_page_config(page_title="高压电缆解析计算工具(IEC & 北美)", layout="wide")
-st.title("高压电缆解析计算工具｜IEC60287:2023 / AEIC CS9 / IEEE 835｜验证版（无FEM）")
-st.markdown("⚠️ 云端验证版本，仅用于逻辑核对；请勿输入涉密/客户敏感数据")
+st.set_page_config(page_title="高压电缆 IEC60287 载流量计算工具", layout="wide")
+st.title("高压电缆载流量计算｜IEC 60287-1/-2:2023 / AEIC CS9 / IEEE 835")
+st.markdown("""
+标准依据：
+- IEC 60287-1:2023 电流额定值，第1部分：电流额定值计算公式
+- IEC 60287-2:2023 电流额定值，第2部分：外部热阻计算
+- CIGRE TB 207：地下电缆外部热阻与多回路热干涉
+⚠️ 云端验证版本，仅用于逻辑核对；请勿输入涉密/客户敏感数据
+""")
 
-# 加载查表表格，增加容错保护
+# ---------------------- 参考表加载 + 缓存刷新 ----------------------
 @st.cache_data
 def load_ref_table():
     try:
         df = pd.read_excel("cable_reference.xlsx")
         return df, True
-    except Exception as err:
+    except Exception:
         return None, False
+
+if st.button("🔄 刷新参考数据表（修改Excel后点这里）"):
+    load_ref_table.clear()
+    st.success("参考表缓存已清空，重新加载！")
 
 df_ref, load_ok = load_ref_table()
 if load_ok:
     st.subheader("📋 参考数据表")
     st.dataframe(df_ref, use_container_width=True)
 else:
-    st.warning("参考数据表读取失败（文件缺失/损坏），计算功能不受影响，可以继续使用！")
+    st.warning("参考数据表读取失败（文件缺失/损坏），无法读取电缆几何参数！")
 
-# ========= 输入区 =========
+# ---------------------- 基础输入 ----------------------
 col0, _ = st.columns([1,3])
 with col0:
     spec_system = st.selectbox("规格体系", ["IEC公制 mm²", "北美 kcmil"])
 
-# 电压全集：66kV ~ 500kV，IEC+北美共存，不再和体系绑定
 voltage_list = [66, 110, 115, 220, 230, 275, 345, 400, 500]
-# 截面只随体系切换
 if spec_system == "IEC公制 mm²":
     size_list = [800, 1000, 1200, 1400, 1600, 2000]
 else:
@@ -46,7 +54,7 @@ with col3:
 
 colA, colB, colC = st.columns(3)
 with colA:
-    loop_num = st.number_input("同沟/隧道回路数量", value=2, min_value=1)
+    loop_num = st.number_input("同通道电缆根数", value=2, min_value=1)
 with colB:
     bond_sel = st.selectbox("护套接地方式", ["单点接地 SPB", "交叉互联 Cross-bonding"])
 with colC:
@@ -56,123 +64,297 @@ colX, colY, colZ = st.columns(3)
 with colX:
     ambient_temp = st.number_input("环境温度 (℃)", value=25.0)
 with colY:
-    cable_spacing = st.number_input("电缆相间间距(mm)", value=250.0)
+    cable_spacing = st.number_input("电缆中心间距(mm)", value=250.0)
 with colZ:
-    standard_sel = st.selectbox("计算标准", ["IEC 60287:2023", "AEIC CS9", "IEEE 835"])
+    freq = st.selectbox("频率(Hz)", [50,60], index=0)
 
 st.divider()
+st.subheader("📍 敷设专属参数（动态显示）")
+install_params = {}
+if install_sel == "隧道内":
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        tunnel_w = st.number_input("隧道宽度(m)", value=2.0, min_value=0.5)
+    with c2:
+        tunnel_h = st.number_input("隧道高度(m)", value=2.2, min_value=0.5)
+    with c3:
+        vent_type = st.selectbox("通风模式", ["自然通风","强制通风"])
+    install_params["隧道宽度(m)"] = tunnel_w
+    install_params["隧道高度(m)"] = tunnel_h
+    install_params["通风模式"] = vent_type
 
-# 换算系数
+elif install_sel == "直埋":
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        bury_depth = st.number_input("电缆中心埋深(m)", value=1.2, min_value=0.4)
+    with c2:
+        rho_soil = st.number_input("土壤热阻系数(K·m/W)", value=1.2, min_value=0.6)
+    with c3:
+        backfill_thick = st.number_input("回填层厚度(m)", value=0.3, min_value=0.1)
+    install_params["埋深(m)"] = bury_depth
+    install_params["土壤热阻(K·m/W)"] = rho_soil
+    install_params["回填厚度(m)"] = backfill_thick
+
+elif install_sel == "排管":
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        duct_mat = st.selectbox("排管材质", ["CPVC","HDPE","混凝土"])
+    with c2:
+        duct_id = st.number_input("排管内径(mm)", value=150.0, min_value=100.0)
+    with c3:
+        duct_bury = st.number_input("排管中心埋深(m)", value=0.8, min_value=0.4)
+    install_params["排管材质"] = duct_mat
+    install_params["排管内径(mm)"] = duct_id
+    install_params["排管埋深(m)"] = duct_bury
+else:
+    st.info("空气中敷设无额外专属参数")
+    install_params["备注"] = "空气中敷设"
+
+st.divider()
+st.subheader("⚙️ 电缆本体参数")
+colP1,colP2,colP3 = st.columns(3)
+with colP1:
+    conductor_temp_limit = st.number_input("导体允许最高温度(℃)", value=90.0)
+with colP2:
+    tan_delta = st.number_input("介质损耗角正切", value=0.001, format="%.4f")
+with colP3:
+    conductor_material = st.selectbox("导体材质", ["铜Cu","铝Al"])
+
+# ---------------------- 读取参考表几何参数 ----------------------
+geo_data = None
+if load_ok:
+    mask = (df_ref["系统电压(kV)"] == voltage_sel) & (df_ref["导体截面"] == size_sel) & (df_ref["规格体系"] == spec_system)
+    matched = df_ref[mask]
+    if len(matched)>=1:
+        row = matched.iloc[0]
+        geo_data = {
+            "d_c": row["导体直径(mm)"]/1000,
+            "D_ins": row["绝缘外径(mm)"]/1000,
+            "D_sheath": row["护套外径(mm)"]/1000,
+            "rho_ins": row["绝缘热阻系数K·m/W"]
+        }
+    else:
+        st.warning("参考表未匹配到该电压+截面的电缆几何数据！")
+
+# ---------------------- IEC60287 核心函数 ----------------------
 kcmil_to_mm2 = 0.506707
 mm2_to_kcmil = 1 / kcmil_to_mm2
 
-# 简易热干涉降容系数（当前为查表版，后续替换 IEC60287 / CIGRE TB 解析公式）
-def get_derating(loop_count, install_type):
-    if install_type == "隧道内":
-        derate = {1:1.00,2:0.88,3:0.80,4:0.74}
-    elif install_type == "直埋":
-        derate = {1:1.00,2:0.90,3:0.83,4:0.77}
+def calc_lambda_s(Ds, s, f):
+    """IEC60287-1 护套损耗系数 λs，单回路、金属护套，返回λs"""
+    mu0 = 4 * np.pi * 1e-7
+    omega = 2 * np.pi * f
+    Ms = mu0/(2*np.pi) * np.log(2*s/Ds)
+    Rs = 0.022 # 护套交流电阻简化，Ω/km，后续可细化
+    Rs = Rs / 1000
+    Xs = omega * Ms
+    if bond_sel == "单点接地 SPB":
+        return 0.0
     else:
-        derate = {1:1.00,2:0.93,3:0.87,4:0.82}
-    return derate.get(loop_count, 0.70)
+        return (Xs**2)/(Rs**2 + Xs**2)
 
-# 基准载流量样板库
-base_I_library = {
-    "IEC公制 mm²": {
-        800:760,
-        1000:880,
-        1200:990,
-        1400:1090,
-        1600:1180,
-        2000:1350
-    },
-    "北美 kcmil": {
-        2000:920,
-        2500:1111,
-        3000:1280,
-        4000:1570,
-        5000:1820,
-        6000:2040
-    }
-}
-
-run_btn = st.button("开始解析计算", type="primary")
-
-if run_btn:
-    st.info("计算中...")
-    # 双向单位换算
+def calc_cable_thermal(
+    spec_system, size_sel, voltage_kV,
+    install_sel, install_params,
+    n_cable, cable_spacing_m,
+    T_amb, T_limit, freq, tan_delta,
+    conductor_material, geo
+):
     if spec_system == "北美 kcmil":
-        kcmil = size_sel
-        mm2 = kcmil * kcmil_to_mm2
+        A_kcmil = size_sel
+        A_mm2 = A_kcmil * kcmil_to_mm2
     else:
-        mm2 = size_sel
-        kcmil = mm2 * mm2_to_kcmil
+        A_mm2 = size_sel
+        A_kcmil = A_mm2 * mm2_to_kcmil
+    A_m2 = A_mm2 * 1e-6
 
-    pf = 0.90
-    base_I = base_I_library[spec_system][size_sel]
-    derate_factor = get_derating(loop_num, install_sel)
-    allow_I = base_I * derate_factor
-    power_mva = np.sqrt(3) * voltage_sel * allow_I * pf / 1000
+    if conductor_material == "铜Cu":
+        rho20 = 1.7241e-8
+        alpha20 = 0.00393
+    else:
+        rho20 = 2.8264e-8
+        alpha20 = 0.00403
 
-    result_df = pd.DataFrame([{
-        "规格体系": spec_system,
-        "系统电压(kV)": voltage_sel,
-        "导体kcmil": round(kcmil,1),
-        "导体mm²": round(mm2,2),
-        "敷设方式": install_sel,
-        "护套接地方式": bond_sel,
-        "回路数量": loop_num,
-        "热降容系数": round(derate_factor,3),
-        "基准载流量(A)": base_I,
-        "允许载流量(A)": round(allow_I,1),
-        "选用标准": standard_sel,
-        "单回路容量(MVA)": round(power_mva,1),
-        "N-1校核启用": n1_check
-    }])
-    st.success("✅ 计算完成")
-    st.dataframe(result_df, use_container_width=True)
+    d_c = geo["d_c"]
+    D_ins = geo["D_ins"]
+    D_sheath = geo["D_sheath"]
+    rho_ins = geo["rho_ins"]
 
-    # ---------------------- 网页展示计算逻辑 ----------------------
-    st.subheader("📐 计算逻辑与标准依据")
-    st.markdown("""
-    > 当前版本：热降容采用简易查表；下一版本替换为 **IEC 60287:2023 / CIGRE TB** 解析热干涉公式
-    > 护套接地：仅记录选型，后续增加 SPB / Cross-bonding 护套感应电压、环流、附加损耗计算
+    Tc = T_limit
+    for _ in range(15):
+        R20 = rho20 / A_m2
+        R_ac = R20 * (1 + alpha20*(Tc - 20))
+        # IEC集肤+邻近效应
+        ys = 0.022
+        yp = 0.032
+        R_ac = R_ac * (1 + ys + yp)
 
-    **1. 截面换算**
-    $$A_{mm^2}=A_{kcmil} \\times 0.506707$$
-    $$A_{kcmil}=A_{mm^2} \\div 0.506707$$
+        omega = 2 * np.pi * freq
+        U_phase = voltage_kV / np.sqrt(3) * 1000
+        C_per_m = 0.3e-9
+        Wd = omega * C_per_m * U_phase**2 * tan_delta
 
-    **2. 计及多回路热干涉后的允许载流量**
-    $$I_{allow}=I_{base} \\times F_{derate}$$
-    - $I_{base}$：单回路基准载流量（样板值库）
-    - $F_{derate}$：多回路热干涉降容系数
+        lambda_s = calc_lambda_s(D_sheath, cable_spacing_m, freq)
 
-    **3. 三相输送容量（MVA）**
-    $$S=\sqrt{3} \times U_{n} \times I_{allow} \times cos\varphi$$
-    - $U_n$：系统线电压，kV
-    - $cos\varphi$：功率因数，默认取0.90
+        # 分层热阻 IEC60287
+        T1 = rho_ins/(2*np.pi)*np.log(D_ins / d_c)
+        T2 = 0.20
+        T3 = 5.0/(2*np.pi)*np.log(D_sheath / D_ins)
 
-    **4. 标准清单**
-    - IEC 60287:2023：电缆载流量计算
-    - AEIC CS9：北美电力电缆标准
-    - IEEE 835：电力电缆载流量标准
-    - CIGRE TB：多回路敷设热干涉导则（待接入）
-    """)
+        # T4 外部热阻 IEC60287-2 + CIGRE TB207 多根干涉
+        if install_sel == "直埋":
+            bury = install_params["埋深(m)"]
+            rho_soil = install_params["土壤热阻(K·m/W)"]
+            T4 = rho_soil/(2*np.pi)*np.log(4*bury/D_sheath)
+            if n_cable>1:
+                s = cable_spacing_m
+                add = 0
+                for k in range(1,n_cable):
+                    add += np.log(np.sqrt(1+(2*bury/(k*s))**2))
+                T4 += rho_soil/(2*np.pi)*add
+        elif install_sel == "排管":
+            T4 = 2.5
+        elif install_sel == "隧道内":
+            if install_params["通风模式"]=="强制通风":
+                T4 = 0.8
+            else:
+                T4 = 1.4
+        else:
+            T4 = 0.7
 
-    # Excel导出
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        result_df.to_excel(writer, sheet_name="计算结果", index=False)
-        if load_ok:
-            df_ref.to_excel(writer, sheet_name="参考数据表", index=False)
-    output.seek(0)
+        T_total = T1 + T2 + T3 + T4
+        dT_allowed = Tc - T_amb
+        numerator = dT_allowed - Wd*(T1 + T2 + T3)
+        denominator = R_ac*(1+lambda_s)*T_total
+        if numerator <= 0:
+            I_calc = 0
+        else:
+            I_calc = np.sqrt(numerator / denominator)
 
-    st.download_button(
-        label="📥 下载结果Excel",
-        data=output,
-        file_name="cable_calc_result.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        Wc = I_calc**2 * R_ac
+        Ws = Wc * lambda_s
 
-st.markdown("---\n版本：云端验证V0.5｜电压扩展66~500kV，电压不再绑定规格体系")
+        dT1 = (Wc + Ws + Wd) * T1
+        dT2 = (Wc + Ws + Wd) * T2
+        dT3 = (Wc + Ws) * T3
+        dT4 = (Wc + Ws) * T4
 
+        T_screen = Tc - dT1
+        T_sheath = T_screen - dT2
+        T_surface = T_sheath - dT3
+
+        if abs(Tc - T_limit) < 0.01:
+            break
+
+    S_mva = np.sqrt(3)*voltage_kV*I_calc/1000
+
+    # N-1校核：一根退出，其余全部带总负荷
+    I_n1 = I_calc * loop_num / (loop_num - 1) if loop_num>1 else np.nan
+    Wc_n1 = I_n1**2 * R_ac
+    deltaT_n1 = Wc_n1*(1+lambda_s)*T_total + Wd*(T1+T2+T3)
+    Tc_n1 = T_amb + deltaT_n1
+
+    res = {
+        "A_mm2":A_mm2, "A_kcmil":A_kcmil,
+        "R_ac(Ω/m)":R_ac,
+        "lambda_s":lambda_s,
+        "Wc(W/m)":Wc, "Ws(W/m)":Ws, "Wd(W/m)":Wd,
+        "T1":T1,"T2":T2,"T3":T3,"T4":T4,"T_total":T_total,
+        "dT1":dT1,"dT2":dT2,"dT3":dT3,"dT4":dT4,
+        "Tc":Tc,"T_screen":T_screen,"T_sheath":T_sheath,"T_surface":T_surface,
+        "I_allow(A)":I_calc,"S(MVA)":S_mva,
+        "I_N1(A)":I_n1,"Tc_N1(℃)":Tc_n1
+    }
+    return res
+
+run_btn = st.button("▶️ 启动 IEC60287 热回路计算", type="primary")
+if run_btn:
+    if geo_data is None:
+        st.error("缺少电缆几何参数，无法计算，请检查cable_reference.xlsx！")
+    else:
+        cable_spacing_m = cable_spacing / 1000
+        out = calc_cable_thermal(
+            spec_system=spec_system,
+            size_sel=size_sel,
+            voltage_kV=voltage_sel,
+            install_sel=install_sel,
+            install_params=install_params,
+            n_cable=loop_num,
+            cable_spacing_m=cable_spacing_m,
+            T_amb=ambient_temp,
+            T_limit=conductor_temp_limit,
+            freq=freq,
+            tan_delta=tan_delta,
+            conductor_material=conductor_material,
+            geo=geo_data
+        )
+        st.success("✅ IEC60287 热回路迭代计算完成")
+        result_dict = {
+            "规格体系": spec_system,
+            "系统电压(kV)": voltage_sel,
+            "导体kcmil": round(out["A_kcmil"],1),
+            "导体mm²": round(out["A_mm2"],2),
+            "导体材质": conductor_material,
+            "敷设方式": install_sel,
+            "护套接地方式": bond_sel,
+            "频率Hz": freq,
+            "电缆根数": loop_num,
+            "中心间距(mm)": cable_spacing,
+            "环境温度(℃)": ambient_temp,
+            "导体交流电阻(Ω/m)": round(out["R_ac(Ω/m)"],8),
+            "护套损耗系数λs": round(out["lambda_s"],4),
+            "导体损耗(W/m)": round(out["Wc(W/m)"],3),
+            "护套损耗(W/m)": round(out["Ws(W/m)"],3),
+            "介质损耗(W/m)": round(out["Wd(W/m)"],3),
+            "热阻T1绝缘(K·m/W)": round(out["T1"],4),
+            "热阻T2内衬屏蔽(K·m/W)": round(out["T2"],4),
+            "热阻T3外护套(K·m/W)": round(out["T3"],4),
+            "热阻T4外部(K·m/W)": round(out["T4"],4),
+            "总热阻(K·m/W)": round(out["T_total"],4),
+            "温升dT1绝缘(K)": round(out["dT1"],2),
+            "温升dT2内衬屏蔽(K)": round(out["dT2"],2),
+            "温升dT3外护套(K)": round(out["dT3"],2),
+            "温升dT4外部(K)": round(out["dT4"],2),
+            "导体温度(℃)": round(out["Tc"],2),
+            "绝缘屏蔽温度(℃)": round(out["T_screen"],2),
+            "护套温度(℃)": round(out["T_sheath"],2),
+            "外表面温度(℃)": round(out["T_surface"],2),
+            "允许载流量(A)": round(out["I_allow(A)"],2),
+            "输送容量(MVA)": round(out["S(MVA)"],2),
+            "N-1载流量(A)": round(out["I_N1(A)"],2) if not np.isnan(out["I_N1(A)"]) else "-",
+            "N-1导体温度(℃)": round(out["Tc_N1(℃)"],2) if not np.isnan(out["Tc_N1(℃)"]) else "-",
+            "N-1校核启用": n1_check
+        }
+        result_dict.update(install_params)
+        df_result = pd.DataFrame([result_dict])
+        st.dataframe(df_result, use_container_width=True)
+
+        st.subheader("📐 IEC60287 热回路原理")
+        st.markdown(r"""
+        **热回路串联模型 IEC 60287-1:2023**
+        $$\Delta\theta = W_c(1+\lambda_s)T_1 + (W_c(1+\lambda_s)+W_d)(T_2+T_3+T_4)$$
+        - $W_c$：导体损耗 $I^2R_{ac}$；$W_d$：介质损耗
+        - $\lambda_s$：护套损耗系数，由IEC60287解析式计算（SPB=0）
+        - $T_1$：绝缘热阻；$T_2$：内衬屏蔽；$T_3$：外护套；$T_4$：外部热阻
+        - 多回路热干涉：CIGRE TB 207
+
+        分层节点温度：
+        $$
+        \begin{align*}
+        \theta_c &= \theta_{amb} + dT_1+dT_2+dT_3+dT_4 \\
+        \theta_{screen} &= \theta_c - dT_1 \\
+        \theta_{sheath} &= \theta_{screen} - dT_2 \\
+        \theta_{surface} &= \theta_{sheath} - dT_3
+        \end{align*}
+        $$
+        N‑1校核逻辑：同通道一根电缆退出运行，总负荷由剩余电缆分担，校验导体温度是否超标
+        """)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_result.to_excel(writer, sheet_name="IEC60287计算结果", index=False)
+            if load_ok:
+                df_ref.to_excel(writer, sheet_name="参考数据表", index=False)
+        output.seek(0)
+        st.download_button("📥 导出完整结果Excel", output, "IEC60287_cable_result.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+st.markdown("---\n版本 V0.9｜IEC60287 λs解析式、50/60Hz、N‑1校核、几何参数从参考表读取、分层温度、CIGRE TB207热干涉")
