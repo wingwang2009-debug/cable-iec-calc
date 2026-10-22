@@ -145,20 +145,20 @@ if load_ok:
     else:
         st.warning("参考表未匹配到该电压+截面的电缆几何数据！")
 
-# ---------------------- IEC60287 核心计算函数 V1.0 ----------------------
+# ---------------------- IEC60287 核心计算函数 V1.0（修复减号bug） ----------------------
 kcmil_to_mm2 = 0.506707
 mm2_to_kcmil = 1 / kcmil_to_mm2
 
 def calc_skin_proximity(f, A_mm2, d_conductor_m, mat="Cu"):
     """IEC60287‑1:2023 集肤效应ys、邻近效应yp解析式，50/60Hz通用"""
-    mu0 = 4*np.pi*1e‑7
+    mu0 = 4*np.pi*1e-7
     if mat=="Cu":
-        rho20 = 1.7241e‑8
+        rho20 = 1.7241e-8
         alpha20 = 0.00393
     else:
-        rho20 = 2.8264e‑8
+        rho20 = 2.8264e-8
         alpha20 = 0.00403
-    A_m2 = A_mm2*1e‑6
+    A_m2 = A_mm2*1e-6
     Rdc20 = rho20 / A_m2
     omega = 2*np.pi*f
     k_sq = (omega * mu0)/(np.pi * Rdc20)
@@ -171,7 +171,7 @@ def calc_skin_proximity(f, A_mm2, d_conductor_m, mat="Cu"):
 
 def calc_lambda_s_full(bond_mode, Ds, s, f, R_sheath_dc):
     """IEC60287‑1:2023 护套损耗系数λs 三种接地模式"""
-    mu0 = 4*np.pi*1e‑7
+    mu0 = 4*np.pi*1e-7
     omega = 2*np.pi*f
     Ms = mu0/(2*np.pi)*np.log(2*s/Ds)
     Xs = omega * Ms
@@ -198,7 +198,7 @@ def calc_T4_full(install_type, params, D_cable_m, n_cable, s_m, f):
 
     if install_type == "直埋":
         T4_base = rho_backfill/(2*np.pi)*np.log(4*bury / D_cable_m)
-        T4_base += (rho_soil‑rho_backfill)/(2*np.pi)*np.log((bury+backfill_t)/bury)
+        T4_base += (rho_soil-rho_backfill)/(2*np.pi)*np.log((bury+backfill_t)/bury)
         add_interfere = 0.0
         if n_cable>1:
             for k in range(1,n_cable):
@@ -245,13 +245,13 @@ def calc_cable_thermal(
     else:
         A_mm2 = size_sel
         kcmil = A_mm2 * mm2_to_kcmil
-    A_m2 = A_mm2 * 1e‑6
+    A_m2 = A_mm2 * 1e-6
 
     if conductor_material == "铜Cu":
-        rho20 = 1.7241e‑8
+        rho20 = 1.7241e-8
         alpha20 = 0.00393
     else:
-        rho20 = 2.8264e‑8
+        rho20 = 2.8264e-8
         alpha20 = 0.00403
 
     d_c = geo["d_c"]
@@ -265,12 +265,12 @@ def calc_cable_thermal(
     Tc = T_limit
     for _ in range(15):
         R20 = rho20 / A_m2
-        R_ac = R20 * (1 + alpha20*(Tc‑20))
+        R_ac = R20 * (1 + alpha20*(Tc-20))
         R_ac = R_ac * (1 + ys + yp)
 
         omega = 2 * np.pi * freq
         U_phase = voltage_kV / np.sqrt(3) * 1000
-        C_per_m = 0.3e‑9
+        C_per_m = 0.3e-9
         Wd = omega * C_per_m * U_phase**2 * tan_delta
 
         lambda_s = calc_lambda_s_full(bond_sel, D_sheath, cable_spacing_m, freq, R_sheath_dc)
@@ -307,13 +307,13 @@ def calc_cable_thermal(
     S_mva = np.sqrt(3)*voltage_kV*I_calc/1000
 
     # N‑1校核
-    I_n1 = I_calc * n_cable / (n_cable‑1) if n_cable>1 else np.nan
+    I_n1 = I_calc * n_cable / (n_cable-1) if n_cable>1 else np.nan
     Wc_n1 = I_n1**2 * R_ac
     deltaT_n1 = Wc_n1*(1+lambda_s)*T_total + Wd*(T1+T2+T3)
     Tc_n1 = T_amb + deltaT_n1
 
     res = {
-        "A_mm2":A_mm2, "A_kcmil":A_kcmil,
+        "A_mm2":A_mm2, "A_kcmil":kcmil,
         "R_ac(Ω/m)":R_ac,
         "ys集肤系数":round(ys,6),
         "yp邻近系数":round(yp,6),
@@ -426,7 +426,7 @@ if run_btn:
             label="📥 导出完整结果Excel",
             data=output,
             file_name="IEC60287_cable_result_V1.0.xlsx",
-            mime="application/vnd.openxmlformats‑officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
 st.markdown("---\n版本 V1.0｜精度升级：集肤/邻近解析式、三种护套接地模式、T4完整解析、回填层建模、排管管材扩展、隧道风速输入、50/60Hz全适配")
