@@ -28,17 +28,17 @@ col0, _ = st.columns([1,3])
 with col0:
     spec_system = st.selectbox("规格体系", ["IEC公制 mm²", "北美 kcmil"])
 
-# 根据体系联动电压、截面下拉
+# 电压全集：66kV ~ 500kV，IEC+北美共存，不再和体系绑定
+voltage_list = [66, 110, 115, 220, 230, 275, 345, 400, 500]
+# 截面只随体系切换
 if spec_system == "IEC公制 mm²":
-    voltage_list = [110, 220, 275, 400]
     size_list = [800, 1000, 1200, 1400, 1600, 2000]
 else:
-    voltage_list = [115, 230, 345, 500]
     size_list = [2000, 2500, 3000, 4000, 5000, 6000]
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    voltage_sel = st.selectbox("系统电压 (kV)", voltage_list, index=min(2, len(voltage_list)-1))
+    voltage_sel = st.selectbox("系统电压 (kV)", voltage_list, index=3)
 with col2:
     size_sel = st.selectbox("导体截面", size_list, index=1)
 with col3:
@@ -132,7 +132,7 @@ if run_btn:
     st.success("✅ 计算完成")
     st.dataframe(result_df, use_container_width=True)
 
-    # ---------------------- 新增：网页展示计算逻辑 ----------------------
+    # ---------------------- 网页展示计算逻辑 ----------------------
     st.subheader("📐 计算逻辑与标准依据")
     st.markdown("""
     > 当前版本：热降容采用简易查表；下一版本替换为 **IEC 60287:2023 / CIGRE TB** 解析热干涉公式
@@ -174,4 +174,5 @@ if run_btn:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-st.markdown("---\n版本：云端验证V0.4｜增加网页内嵌计算逻辑说明面板")
+st.markdown("---\n版本：云端验证V0.5｜电压扩展66~500kV，电压不再绑定规格体系")
+
